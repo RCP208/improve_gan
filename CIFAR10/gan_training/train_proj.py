@@ -1,0 +1,350 @@
+# coding: utf-8
+import torch
+from torch.nn import functional as F
+import torch.utils.data
+import torch.utils.data.distributed
+from torch import autograd
+import numpy as np
+from gan_training.random_queue import Random_queue
+
+
+class Trainer(object):
+    def __init__(self,
+                 generator,
+                 discriminator,
+                 g_optimizer,
+                 d_optimizer,
+                 gan_type,
+                 reg_type,
+                 reg_param,
+                 pv=1,
+                 iv=0,
+                 dv=0,
+                 time_step=1.,
+                 batch_size=64,
+                 config=None):
+        print("Using PID Trainer")
+        self.generator = generator
+        self.discriminator = discriminator
+        self.g_optimizer = g_optimizer
+        self.d_optimizer = d_optimizer
+
+        self.gan_type = gan_type
+        self.reg_type = reg_type
+        self.reg_param = reg_param
+
+        self.d_xfake = None
+        self.d_previous_z = None
+        self.d_previous_y = None
+
+        self.pv = pv
+        self.iv = iv
+        self.dv = dv
+        self.time_step = time_step
+        self.batch_size = batch_size
+        self.config = config
+        self.i_real_queue = Random_queue(
+            config['training']['batch_size'] *
+            config['training']['i_buffer_factor'],
+            config['training']['batch_size'])
+
+        self.i_fake_queue = Random_queue(
+            config['training']['batch_size'] *
+            config['training']['i_buffer_factor'],
+            config['training']['batch_size'])
+
+        self.max0 = torch.nn.ReLU()
+        self.mse = torch.nn.MSELoss()
+
+    def generator_trainstep(self, x, y, z, it=0):
+        assert (y.size(0) == z.size(0))
+        toggle_grad(self.generator, True)
+        toggle_grad(self.discriminator, False)
+        self.generator.train()
+        self.discriminator.train()
+        self.g_optimizer.zero_grad()
+        feat_list = []
+        pixel_list = []
+        x_tmp = x.detach().requires_grad_(False)
+
+        x_fake = self.generator(z, y)
+        fake_feature, d_fake = self.discriminator(x_fake, y)
+        real_feature, d_real = self.discriminator(x_tmp, y)
+
+        gloss = self.compute_loss(d_fake, 1, is_generator=True)
+
+        if it < 1e5 and it > 8e4:
+            k2 = 0.5 - (2e4) / 3e5
+            k3 = 0.01 - (2e4) / 1.5e7
+        elif 1e5 < it < 1.2e5:
+            k2 = 0.5 - (2e4) / 3e5 + (it - 1e5) / 3e5
+            k3 = 0.01 - (2e4) / 1.5e7 + (it - 1e5) / 1.5e7
+        else:
+            k2 = 0.5
+            k3 = 0.01
+        #k2 = 0.5 - (2e4) / 3e5 + (it - 8e4) / 3e5 #if it < 1.3e5 else 0.5#max(0.75 - 1 / 8e4 * (it - 8e4), 0.5)#min(0.5 + 1 / 3e6 * it, 0.55)#if it < 8e4 else max(1 - (it-8e4)/ 7e4, 0) * 0.5
+        pixel_loss = self.mse(x_fake, x_tmp) * k2
+        # pixel_loss = (d_fake.mean() / (d_real.mean() + 1e-8) - 1)**2
+        # for i in range(4):
+        #     pixel_list.append(((d_fake[i] / (d_real[i] + 1e-8) - 1)**2).mean())
+        # pixel_loss = sum(pixel_list) * 0.01
+
+        #k3 = 0.01 - (2e4) / 1.5e7 + (it - 8e4) / 1.5e7#if it < 1.3e5 else 0.01#max(0.015 - 1 / 4e6 * (it - 8e4), 0.01)#min(0.01 + 1 / 1.5e8 * it, 0.011)#0.01 #+ (it % 781) / 1e6#max(0.1 - 6 / 1e7 * it, 0.01) #if it < 8e4 else max(1 - it/1.6e5, 0) * 0.01
+        for i in range(4):
+            feat_list.append(self.mse(real_feature[str(i)], fake_feature[str(i)]))
+        feat_loss = sum(feat_list) *k3
+        # for i in range(4):
+        #     feat_list.append(((fake_feature[str(i)] / (real_feature[str(i)] + 1e-8) - 1)**2).mean())
+        # feat_loss = sum(feat_list) * 1e-10
+
+        # d_f = [-(dr.mean() - df.mean()) for (dr, df) in zip(d_real, d_fake)]
+        # softmax = torch.nn.Softmax(dim=0)
+        # coe = softmax(torch.tensor(d_f))
+        # gloss = sum([c * df.mean() for (c, df) in zip(coe, d_fake)])
+
+        # gloss_all = gloss + gloss_content
+        # gloss_all.backward()
+        (gloss + pixel_loss + feat_loss).backward()
+
+        self.g_optimizer.step()
+
+        return gloss.item(), pixel_loss.item(), feat_loss.item()
+
+    def discriminator_trainstep(self, x_real, y, z, it=0):
+        # print(it)
+        toggle_grad(self.generator, False)
+        toggle_grad(self.discriminator.module.feature_network, False)
+        toggle_grad(self.discriminator.module.multi_disc, True)
+        self.generator.train()
+        self.discriminator.train()
+        self.d_optimizer.zero_grad()
+
+        reg_d = self.config['training']['regularize_output_d']
+        real_feature, d_real = self.discriminator(x_real, y)
+        # 判别器对于同类标签的输出方差尽可能小，对于正样本均值越小越好，负样本均值越大越好
+        dloss_real = self.compute_loss(d_real, 1) * self.pv
+        dloss_real_list = [r.mean() for r in d_real]
+
+        real_var_loss, real_mean_loss = self.var_mean_loss(d_real, y, num_labels=10)
+        (dloss_real).backward()
+        # if reg_d > 0.:
+        #     dloss_real += (d_real**2).mean() * reg_d
+
+        # On fake data
+        with torch.no_grad():
+            x_fake = self.generator(z, y)
+        fake_feature, d_fake = self.discriminator(x_fake, y)
+        dloss_fake = self.compute_loss(d_fake, 0) * self.pv
+        dloss_fake_list = [-f.mean() for f in d_fake]
+        fake_var_loss, fake_mean_loss = self.var_mean_loss(d_fake, y, num_labels=10)
+        # if reg_d > 0.:
+        #     dloss_fake += (d_fake**2).mean() * reg_d
+        # d_f = [(dr.mean() - df.mean()) for (dr, df) in zip(d_real, d_fake)]
+        # softmax = torch.nn.Softmax(dim=0)
+        # coe = softmax(torch.tensor(d_f))
+
+        # dloss_real = sum([c * dr.mean() for (c, dr) in zip(coe, d_real)])
+        # dloss_fake = sum([c * (-df.mean()) for (c, df) in zip(coe, d_fake)])
+        (dloss_fake).backward()
+
+        reg_gp = torch.from_numpy(np.array([0.]))#self.wgan_gp_reg(x_real, x_fake, y, center=0) * 5
+
+        # (reg_gp).backward()
+
+        i_loss = torch.from_numpy(np.array([0.]))
+        index = torch.from_numpy(np.array([0.]))
+        M_D = torch.from_numpy(np.array([0.]))
+        M_D2 = torch.from_numpy(np.array([0.]))
+        if self.iv > 0:
+            # i_factor = self.config['training']['i_buffer_factor']
+            # i_store = self.config['training']['i_buffer_onestep']
+            xtmp = x_real.detach().cpu().numpy()
+            ytmp = y.detach().cpu().numpy()
+            self.i_real_queue.set_data(xtmp, ytmp)
+
+            xtmp = x_fake.detach().cpu().numpy()
+            ytmp = y.detach().cpu().numpy()
+            self.i_fake_queue.set_data(xtmp, ytmp)
+
+            i_xreal, i_yreal = self.i_real_queue.get_data()
+            i_xfake, i_yfake = self.i_fake_queue.get_data()
+
+            i_xreal = torch.as_tensor(i_xreal, dtype=torch.float32).cuda()
+            i_xfake = torch.as_tensor(i_xfake, dtype=torch.float32).cuda()
+            i_yreal = torch.as_tensor(i_yreal, dtype=torch.long).cuda()
+            i_yfake = torch.as_tensor(i_yfake, dtype=torch.long).cuda()
+
+            _, i_real_doutput = self.discriminator(i_xreal, i_yreal)
+            i_loss_real = self.compute_loss(i_real_doutput, 1)
+            _, i_fake_doutput = self.discriminator(i_xfake, i_yfake)
+            i_loss_fake = self.compute_loss(i_fake_doutput, 0)
+
+            if self.config['training']['pid_type'] == 'function':
+                i_loss = (i_loss_real + i_loss_fake) * self.iv
+            elif self.config['training']['pid_type'] == 'square':
+                reg = (sum([(l**2).mean() for l in i_real_doutput]) +
+                          sum([(l**2).mean() for l in i_fake_doutput]))
+                index = 1 / (i_xreal.mean() ** 2 + i_xfake.mean() ** 2)
+                k = max(0.1 * (1 - it / 3e5), 0.05)
+                r = (x_real + 1) / 2
+                f = (x_fake + 1) / 2
+                M_D = (r.mean() + f.mean())
+                M_D2 = abs(r.mean() - f.mean()) / (r.mean() + f.mean())
+                k1 = max(k, 0.073)
+                i_loss = reg * 0.1#k #k1
+            elif self.config['training']['pid_type'] == 'abs':
+                i_loss = (torch.abs(i_real_doutput).mean() +
+                          torch.abs(i_fake_doutput).mean()) * self.iv
+            elif self.config['training']['pid_type'] == 'accurate':
+                i_fake_doutput = self.max0(i_fake_doutput)
+                i_real_doutput = -1 * self.max0(-1 * i_real_doutput)
+                i_loss = (i_fake_doutput - i_real_doutput).mean() * self.iv
+            i_loss.backward()
+
+        d_loss = torch.from_numpy(np.array([0.]))
+        # print(self.dv)
+        if self.dv > 0 and it > 0:
+            if self.d_xfake is None:
+                self.d_xreal = x_real
+                self.d_xfake = x_fake
+                self.d_previous_z = z
+                self.d_previous_y = y
+            else:
+                d_loss_previous_f = self.compute_loss(
+                    self.discriminator(self.d_xfake, self.d_previous_y), 0)
+                d_loss_previous_r = self.compute_loss(
+                    self.discriminator(self.d_xreal, self.d_previous_y), 1)
+                d_loss_previous = d_loss_previous_f + d_loss_previous_r
+
+                d_loss_current_f = self.compute_loss(
+                    self.discriminator(x_fake, y), 0)
+                d_loss_current_r = self.compute_loss(
+                    self.discriminator(x_real, y), 1)
+                d_loss_current = d_loss_current_f + d_loss_current_r
+
+                d_loss = (d_loss_current - d_loss_previous) * self.dv
+                d_loss.backward()
+
+                self.d_xreal = x_real
+                self.d_xfake = x_fake
+                self.d_previous_z = z
+                self.d_previous_y = y
+
+        self.d_optimizer.step()
+        toggle_grad(self.discriminator, False)
+
+        # Output
+        dloss = (dloss_real + dloss_fake)
+        return (dloss.item(), d_loss.item(), i_loss.item(), real_var_loss.item(),
+               real_mean_loss.item(), fake_var_loss.item(), fake_mean_loss.item(),
+                dloss_real_list, dloss_fake_list, index, M_D, M_D2, reg_gp.item())
+
+    def compute_loss(self, d_out, target, is_generator=False):
+        # targets = d_out.new_full(size=d_out.size(), fill_value=target)
+
+        if self.gan_type == 'standard':
+            loss = F.binary_cross_entropy_with_logits(d_out, targets)
+        elif self.gan_type == 'wgan':
+            loss = sum([(2 * target - 1) * i.mean() for i in d_out])
+        elif self.gan_type == 'hinge':
+            if is_generator is False:
+                loss = sum([(F.relu(1 + (2 * (1-target) - 1) * i)).mean() for i in d_out])
+            else:
+                loss = sum([((2 * (1 - target) - 1) * i).mean() for i in d_out])
+        elif self.gan_type == 'sigmoid':
+            d_out = d_out * self.config['training']['sigmoid_coe']
+            loss = ((2 * target - 1) * F.sigmoid(d_out)
+                    ).mean() / self.config['training']['sigmoid_coe']
+        elif self.gan_type == 'lsgan1':
+            if is_generator is False:
+                target = target * 2 - 1
+                loss = ((d_out - target)**2).mean()
+            else:
+                loss = (d_out**2).mean()
+        elif self.gan_type == 'lsgan2':
+            target -= 0.5
+            loss = ((d_out - target)**2).mean()
+        else:
+            raise NotImplementedError
+
+        return loss
+
+    def wgan_gp_reg(self, x_real, x_fake, y, center=1.):
+        batch_size = y.size(0)
+        eps = torch.rand(batch_size, device=y.device).view(batch_size, 1, 1, 1)
+        x_interp = (1 - eps) * x_real + eps * x_fake
+        x_interp = x_interp.detach()
+        x_interp.requires_grad_()
+        interp_feat, d_out = self.discriminator(x_interp, y)
+
+        reg = sum([(i.sqrt() - center).pow(2).mean() for i in compute_grad2(d_out, interp_feat)])
+
+        return reg
+
+    def var_mean_loss(self, dout, y, num_labels):
+        var_outer = []
+        mean_outer = []
+        for out in dout:
+            var_inter = []
+            mean_inter = []
+            for i in range(num_labels):
+                index = []
+                for j, label in enumerate(y):
+                    if label == i: index.append(j)
+                if len(index) != 0:
+                    if len(index) == 1:
+                        var_inter.append(torch.tensor(0, device='cuda'))
+                    else:
+                        var_inter.append(torch.var(out[index]))
+                        mean_inter.append(torch.mean(out[index]))
+            var_outer.append(max(var_inter))
+            mean_outer.append(min_dist_inlist(mean_inter))
+        var_loss = sum(var_outer)
+        mean_loss = sum(mean_outer)
+
+        return var_loss, mean_loss
+
+
+
+# Utility functions
+def toggle_grad(model, requires_grad):
+    for p in model.parameters():
+        p.requires_grad_(requires_grad)
+
+
+def compute_grad2(d_out, x_in): # 平方
+    batch_size = d_out[0].size(0)
+    reg = []
+    for i in range(4):
+        grad_dout = autograd.grad(outputs=d_out[i].sum(),
+                                  inputs=x_in[str(i)],
+                                  create_graph=True,
+                                  retain_graph=True,
+                                  only_inputs=True)[0]
+        grad_dout2 = grad_dout.pow(2)
+        assert (grad_dout2.size() == x_in[str(i)].size())
+        reg.append(grad_dout2.view(batch_size, -1).sum(1))
+    return reg
+
+
+def update_average(model_tgt, model_src, beta):
+    toggle_grad(model_src, False)
+    toggle_grad(model_tgt, False)
+
+    param_dict_src = dict(model_src.named_parameters())
+
+    for p_name, p_tgt in model_tgt.named_parameters():
+        p_src = param_dict_src[p_name]
+        assert (p_src is not p_tgt)
+        p_tgt.copy_(beta * p_tgt + (1. - beta) * p_src)
+
+def min_dist_inlist(input):
+    if len(input)==1:
+        return input[0]
+    input.sort()
+    dist = []
+    for i in range(len(input)):
+        if i < (len(input) - 1):
+            dist.append(input[i+1] - input[i])
+    return max(dist)
+
