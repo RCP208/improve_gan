@@ -1,0 +1,10 @@
+{"results": {"fid50k_full": 32.131342646342794}, "metric": "fid50k_full", "total_time": 60.26638913154602, "total_time_str": "1m 00s", "num_gpus": 1, "timestamp": 1735580113.388935}
+{"results": {"fid50k_full": 22.90921927077899}, "metric": "fid50k_full", "total_time": 61.625004291534424, "total_time_str": "1m 02s", "num_gpus": 1, "timestamp": 1735587210.2867033}
+{"results": {"fid50k_full": 18.10893908712638}, "metric": "fid50k_full", "total_time": 64.02771592140198, "total_time_str": "1m 04s", "num_gpus": 1, "timestamp": 1735594317.4500997}
+{"results": {"fid50k_full": 18.187674961887776}, "metric": "fid50k_full", "total_time": 67.40698218345642, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1735601436.4348059}
+{"results": {"fid50k_full": 16.60971568443536}, "metric": "fid50k_full", "total_time": 64.97121334075928, "total_time_str": "1m 05s", "num_gpus": 1, "timestamp": 1735608547.9704666}
+{"results": {"fid50k_full": 17.019111482509754}, "metric": "fid50k_full", "total_time": 65.67978405952454, "total_time_str": "1m 06s", "num_gpus": 1, "timestamp": 1735615620.3115513}
+{"results": {"fid50k_full": 16.92641325649192}, "metric": "fid50k_full", "total_time": 61.95608854293823, "total_time_str": "1m 02s", "num_gpus": 1, "timestamp": 1735622715.1918633}
+{"results": {"fid50k_full": 16.740455719627644}, "metric": "fid50k_full", "total_time": 59.86335301399231, "total_time_str": "1m 00s", "num_gpus": 1, "timestamp": 1735629760.333883}
+{"results": {"fid50k_full": 17.816673887476846}, "metric": "fid50k_full", "total_time": 59.82434153556824, "total_time_str": "1m 00s", "num_gpus": 1, "timestamp": 1735636873.1545749}
+{"results": {"fid50k_full": 17.313818933180123}, "metric": "fid50k_full", "total_time": 65.72836899757385, "total_time_str": "1m 06s", "num_gpus": 1, "timestamp": 1735643993.919649}

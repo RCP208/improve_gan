@@ -1,0 +1,12 @@
+{"results": {"fid50k_full": 31.998754021865448}, "metric": "fid50k_full", "total_time": 67.37027215957642, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749788342.2675323}
+{"results": {"fid50k_full": 19.585428887517715}, "metric": "fid50k_full", "total_time": 67.61822772026062, "total_time_str": "1m 08s", "num_gpus": 1, "timestamp": 1749796916.8919635}
+{"results": {"fid50k_full": 17.7570682941608}, "metric": "fid50k_full", "total_time": 67.127023935318, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749805383.6595008}
+{"results": {"fid50k_full": 16.325457589599292}, "metric": "fid50k_full", "total_time": 66.65953731536865, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749813848.3084698}
+{"results": {"fid50k_full": 15.727205819018405}, "metric": "fid50k_full", "total_time": 67.19221210479736, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749822314.8494246}
+{"results": {"fid50k_full": 16.819401224302503}, "metric": "fid50k_full", "total_time": 67.21427083015442, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749830781.339047}
+{"results": {"fid50k_full": 16.712700470652884}, "metric": "fid50k_full", "total_time": 67.13870024681091, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749839249.657521}
+{"results": {"fid50k_full": 17.05400432994828}, "metric": "fid50k_full", "total_time": 67.25142812728882, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749847711.2173028}
+{"results": {"fid50k_full": 19.274486056135885}, "metric": "fid50k_full", "total_time": 67.1374442577362, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749856170.627249}
+{"results": {"fid50k_full": 18.697255869566316}, "metric": "fid50k_full", "total_time": 66.85858964920044, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749864627.7495594}
+{"results": {"fid50k_full": 18.154505209617223}, "metric": "fid50k_full", "total_time": 67.21281933784485, "total_time_str": "1m 07s", "num_gpus": 1, "timestamp": 1749873086.9397743}
+{"results": {"fid50k_full": 17.72691173546007}, "metric": "fid50k_full", "total_time": 67.72770810127258, "total_time_str": "1m 08s", "num_gpus": 1, "timestamp": 1749881572.9646628}
